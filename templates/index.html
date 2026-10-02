@@ -1,0 +1,343 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Autonomous Navigation System</title>
+    <style>
+        :root {
+            color-scheme: dark;
+            font-family: Arial, sans-serif;
+            background: #0b1220;
+            color: #e5edf9;
+        }
+
+        * { box-sizing: border-box; }
+
+        body {
+            margin: 0;
+            padding: 24px;
+        }
+
+        main {
+            max-width: 1050px;
+            margin: auto;
+        }
+
+        h1 { margin-bottom: 8px; }
+
+        .subtitle {
+            color: #a8b6ca;
+            line-height: 1.6;
+        }
+
+        .panel {
+            background: #131e30;
+            border: 1px solid #2b3b53;
+            border-radius: 14px;
+            padding: 18px;
+            margin: 18px 0;
+        }
+
+        .controls {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            align-items: center;
+        }
+
+        button, select {
+            border: 1px solid #425674;
+            background: #22334b;
+            color: white;
+            border-radius: 8px;
+            padding: 10px 13px;
+            cursor: pointer;
+        }
+
+        button:hover { background: #314967; }
+
+        button.active {
+            background: #176bca;
+            border-color: #64adff;
+        }
+
+        .grid-wrap {
+            overflow-x: auto;
+        }
+
+        canvas {
+            display: block;
+            width: 100%;
+            max-width: 800px;
+            height: auto;
+            margin: 0 auto;
+            border-radius: 8px;
+            cursor: crosshair;
+            background: #101a2a;
+        }
+
+        .metrics {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+            gap: 12px;
+        }
+
+        .metric {
+            background: #0d1727;
+            border: 1px solid #2b3b53;
+            border-radius: 10px;
+            padding: 14px;
+        }
+
+        .metric span {
+            display: block;
+            color: #a8b6ca;
+            font-size: 13px;
+            margin-bottom: 8px;
+        }
+
+        .metric strong { font-size: 22px; }
+
+        #status {
+            color: #93c5fd;
+            min-height: 24px;
+        }
+
+        .legend {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 16px;
+            color: #c3cede;
+            font-size: 13px;
+        }
+
+        .note {
+            color: #a8b6ca;
+            font-size: 13px;
+            line-height: 1.6;
+        }
+    </style>
+</head>
+<body>
+<main>
+    <h1>AI-Based Autonomous Navigation System</h1>
+    <p class="subtitle">
+        Explore A* path planning in an interactive 2D grid.
+        Change the destination, place obstacles, and observe how
+        the navigation algorithm finds a route.
+    </p>
+
+    <section class="panel">
+        <div class="controls">
+            <button id="goalMode" class="active">Set Destination</button>
+            <button id="obstacleMode">Add / Remove Obstacles</button>
+            <button id="replan">Recalculate Path</button>
+            <button id="reset">Reset Map</button>
+        </div>
+        <p class="note">
+            Click a cell to set the destination. Select “Add / Remove
+            Obstacles” to toggle blocked cells. The green cell is the
+            start and the red cell is the destination.
+        </p>
+        <div class="grid-wrap">
+            <canvas id="grid" width="800" height="560"
+                    aria-label="Interactive navigation grid"></canvas>
+        </div>
+        <div class="legend">
+            <span>🟢 Start</span>
+            <span>🔴 Destination</span>
+            <span>🟦 Planned path</span>
+            <span>⬛ Obstacles</span>
+        </div>
+        <p id="status" role="status">Calculating initial route...</p>
+    </section>
+
+    <section class="panel">
+        <h2>Navigation Metrics</h2>
+        <div class="metrics">
+            <div class="metric">
+                <span>Path steps</span>
+                <strong id="steps">—</strong>
+            </div>
+            <div class="metric">
+                <span>Path cost</span>
+                <strong id="cost">—</strong>
+            </div>
+            <div class="metric">
+                <span>Expanded nodes</span>
+                <strong id="expanded">—</strong>
+            </div>
+            <div class="metric">
+                <span>Planning time (ms)</span>
+                <strong id="time">—</strong>
+            </div>
+        </div>
+    </section>
+
+    <p class="note">
+        This is a software simulation using the classical A* search
+        algorithm. It does not control a real robot or use physical sensors.
+    </p>
+</main>
+
+<script>
+    const COLS = 20;
+    const ROWS = 14;
+    const CELL = 40;
+    const START = [1, 1];
+    const INITIAL_GOAL = [18, 12];
+
+    const canvas = document.getElementById("grid");
+    const ctx = canvas.getContext("2d");
+    const statusEl = document.getElementById("status");
+
+    let goal = [...INITIAL_GOAL];
+    let obstacles = new Set();
+    let path = [];
+    let mode = "goal";
+    let requestNumber = 0;
+
+    const key = (cell) => `${cell[0]},${cell[1]}`;
+
+    function sameCell(a, b) {
+        return a[0] === b[0] && a[1] === b[1];
+    }
+
+    function setMode(nextMode) {
+        mode = nextMode;
+        document.getElementById("goalMode")
+            .classList.toggle("active", mode === "goal");
+        document.getElementById("obstacleMode")
+            .classList.toggle("active", mode === "obstacle");
+        statusEl.textContent = mode === "goal"
+            ? "Click a cell to set the destination."
+            : "Click cells to add or remove obstacles.";
+    }
+
+    document.getElementById("goalMode")
+        .addEventListener("click", () => setMode("goal"));
+    document.getElementById("obstacleMode")
+        .addEventListener("click", () => setMode("obstacle"));
+
+    function drawGrid() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        const pathCells = new Set(path.map(key));
+
+        for (let y = 0; y < ROWS; y++) {
+            for (let x = 0; x < COLS; x++) {
+                const cell = [x, y];
+                const k = key(cell);
+                let fill = "#172438";
+
+                if (pathCells.has(k)) fill = "#1764a5";
+                if (obstacles.has(k)) fill = "#030712";
+                if (sameCell(cell, START)) fill = "#16a34a";
+                if (sameCell(cell, goal)) fill = "#dc2626";
+
+                ctx.fillStyle = fill;
+                ctx.fillRect(x * CELL + 1, y * CELL + 1,
+                             CELL - 2, CELL - 2);
+                ctx.strokeStyle = "#34445b";
+                ctx.strokeRect(x * CELL, y * CELL, CELL, CELL);
+            }
+        }
+    }
+
+    async function calculatePath() {
+        const thisRequest = ++requestNumber;
+        statusEl.textContent = "Calculating route...";
+
+        try {
+            const response = await fetch("/plan", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    start: START,
+                    goal,
+                    obstacles: Array.from(obstacles, value =>
+                        value.split(",").map(Number))
+                })
+            });
+
+            const result = await response.json();
+
+            if (thisRequest !== requestNumber) return;
+            if (!response.ok) throw new Error(result.error || "Request failed.");
+
+            path = result.path || [];
+            document.getElementById("steps").textContent = result.steps;
+            document.getElementById("cost").textContent =
+                result.path_cost === null ? "N/A" :
+                Number(result.path_cost).toFixed(2);
+            document.getElementById("expanded").textContent =
+                result.expanded_nodes;
+            document.getElementById("time").textContent =
+                Number(result.planning_ms).toFixed(3);
+
+            statusEl.textContent = result.reachable
+                ? "Route found. The blue cells show the planned path."
+                : "No route found. Remove some obstacles and try again.";
+
+            drawGrid();
+        } catch (error) {
+            if (thisRequest !== requestNumber) return;
+            statusEl.textContent = "Error: " + error.message;
+        }
+    }
+
+    canvas.addEventListener("click", (event) => {
+        const rect = canvas.getBoundingClientRect();
+        const x = Math.floor((event.clientX - rect.left) *
+                             canvas.width / rect.width / CELL);
+        const y = Math.floor((event.clientY - rect.top) *
+                             canvas.height / rect.height / CELL);
+
+        if (x < 0 || x >= COLS || y < 0 || y >= ROWS) return;
+
+        const cell = [x, y];
+        const k = key(cell);
+
+        if (sameCell(cell, START)) {
+            statusEl.textContent = "The start cell cannot be changed.";
+            return;
+        }
+
+        if (mode === "goal") {
+            if (obstacles.has(k)) {
+                statusEl.textContent =
+                    "Remove the obstacle before selecting that destination.";
+                return;
+            }
+            goal = cell;
+        } else {
+            if (sameCell(cell, goal)) {
+                statusEl.textContent =
+                    "Move the destination before blocking that cell.";
+                return;
+            }
+            if (obstacles.has(k)) obstacles.delete(k);
+            else obstacles.add(k);
+        }
+
+        calculatePath();
+    });
+
+    document.getElementById("replan")
+        .addEventListener("click", calculatePath);
+
+    document.getElementById("reset").addEventListener("click", () => {
+        obstacles.clear();
+        goal = [...INITIAL_GOAL];
+        path = [];
+        setMode("goal");
+        calculatePath();
+    });
+
+    drawGrid();
+    calculatePath();
+</script>
+</body>
+</html>
