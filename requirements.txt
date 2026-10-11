@@ -1,0 +1,6 @@
+pygame
+pytest
+matplotlib
+Flask
+gunicorn
+scikit-learn
